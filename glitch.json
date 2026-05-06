@@ -1,0 +1,16 @@
+{
+  "name": "workjammers-multiplayer",
+  "version": "1.0.0",
+  "description": "Workjammers 4D - Multiplayer Air Hockey Game",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "env": {
+    "NODE_VERSION": "18"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.2"
+  }
+}

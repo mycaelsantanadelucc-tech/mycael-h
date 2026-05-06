@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="pt-pt">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Workjammers 4D - SaaS Hyper-Performance</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700;900&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Space Grotesk', sans-serif;
+            background-color: #05080a;
+            color: #ffffff;
+            overflow: hidden;
+            height: 100vh;
+            margin: 0;
+        }
+
+        .mono { font-family: 'JetBrains Mono', monospace; }
+
+        .sidebar {
+            background-color: rgba(15, 23, 42, 0.95);
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            backdrop-filter: blur(10px);
+        }
+
+        .header-glass {
+            background: rgba(15, 23, 42, 0.9);
+            backdrop-filter: blur(15px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        #canvas-container {
+            width: 100%;
+            height: 100%;
+            cursor: grab;
+        }
+        #canvas-container:active {
+            cursor: grabbing;
+        }
+
+        .kpi-badge {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            padding: 10px 20px;
+            border-radius: 8px;
+        }
+
+        .scanline {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.1) 50%);
+            background-size: 100% 4px;
+            pointer-events: none;
+            z-index: 100;
+            opacity: 0.2;
+        }
+
+        .ui-overlay {
+            pointer-events: none;
+        }
+        .ui-overlay * {
+            pointer-events: auto;
+        }
+
+        .scoreboard-container {
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #334155;
+            box-shadow: 0 0 20px rgba(0, 242, 255, 0.2);
+            padding: 4px 24px;
+            border-radius: 0 0 12px 12px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .zone-card-input {
+            background: transparent;
+            border: none;
+            outline: none;
+            font-weight: 900;
+            font-style: italic;
+            text-transform: uppercase;
+            font-size: 0.7rem;
+            text-align: center;
+            width: 110px;
+            cursor: text;
+        }
+        
+        .zone-card-input:focus {
+            background: rgba(255, 255, 255, 0.1);
+            letter-spacing: 0.05em;
+        }
+
+        .config-card {
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 14px;
+            border-radius: 12px;
+            transition: all 0.2s;
+        }
+        .config-card:hover {
+            background: rgba(255, 255, 255, 0.05);
+            border-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .color-inputs {
+            display: flex;
+            gap: 8px;
+        }
+
+        input[type="color"] {
+            -webkit-appearance: none;
+            border: none;
+            width: 28px;
+            height: 28px;
+            cursor: pointer;
+            background: none;
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: 2px solid rgba(255,255,255,0.2); border-radius: 6px; }
+
+        select {
+            background: #0f172a;
+            color: #94a3b8;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            padding: 4px 8px;
+            font-size: 10px;
+            font-weight: bold;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .custom-scroll::-webkit-scrollbar { width: 3px; }
+        .custom-scroll::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.1); border-radius: 10px; }
+    </style>
+</head>
+<body class="flex flex-col h-screen">
+    <div class="scanline"></div>
+
+    <header class="header-glass flex items-center justify-between px-6 py-3 z-50">
+        <div class="flex items-center gap-6">
+            <div class="flex flex-col leading-tight">
+                <span class="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Dimension Link</span>
+                <div class="flex items-center gap-2">
+                    <div id="connection-status" class="w-3 h-3 bg-yellow-400 rounded-full animate-pulse"></div>
+                    <span id="status-text" class="text-white text-sm font-bold mono uppercase tracking-tighter">Connecting...</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="text-center">
+            <h1 class="text-xl font-black italic tracking-tighter uppercase">
+                <span class="text-blue-500">Work</span><span class="text-cyan-300">jammers</span>
+            </h1>
+        </div>
+
+        <div class="flex items-center gap-4">
+            <div class="kpi-badge">
+                <span id="time-display" class="text-sm font-bold mono text-cyan-400">05:00:00</span>
+            </div>
+        </div>
+    </header>
+
+    <div class="flex flex-1 overflow-hidden relative">
+        <aside class="sidebar w-[200px] lg:w-[320px] flex flex-col p-6 gap-6 z-40">
+            <div class="space-y-6 overflow-y-auto pr-2 custom-scroll">
+                <div>
+                    <span class="text-[10px] font-bold text-slate-500 uppercase block mb-4 tracking-[0.2em]">Configurações Visuais</span>
+                    
+                    <div class="space-y-3">
+                        <div class="config-card space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex flex-col">
+                                    <span class="text-[11px] font-bold text-yellow-400 uppercase">Atleta Alpha</span>
+                                    <span class="text-[9px] text-slate-500">Degradê de Cores</span>
+                                </div>
+                                <div class="color-inputs">
+                                    <input type="color" id="p1-color-1" value="#00f2ff" oninput="updatePlayer1Visuals()" title="Cor Inicial">
+                                    <input type="color" id="p1-color-2" value="#0044ff" oninput="updatePlayer1Visuals()" title="Cor Final">
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between pt-2 border-t border-white/5">
+                                <span class="text-[10px] text-slate-400">Padrão</span>
+                                <select id="p1-texture-selector" onchange="updatePlayer1Visuals()">
+                                    <option value="gradient">Apenas Degradê</option>
+                                    <option value="stripes">Riscas Técnicas</option>
+                                    <option value="data">Matriz Dados</option>
+                                    <option value="hazard">Aviso Bio</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="config-card space-y-4">
+                            <div class="flex items-center justify-between">
+                                <div class="flex flex-col">
+                                    <span class="text-[11px] font-bold text-cyan-400 uppercase">Arena Unificada</span>
+                                    <span class="text-[9px] text-slate-500">Degradê Radial</span>
+                                </div>
+                                <div class="color-inputs">
+                                    <input type="color" id="floor-color-1" value="#2a3b5c" oninput="updateArenaVisuals()" title="Cor Centro">
+                                    <input type="color" id="floor-color-2" value="#05080a" oninput="updateArenaVisuals()" title="Cor Bordas">
+                                </div>
+                            </div>
+                            <div class="flex items-center justify-between pt-2 border-t border-white/5">
+                                <span class="text-[10px] text-slate-400">Textura Tática</span>
+                                <select id="floor-texture-selector" onchange="updateArenaVisuals()">
+                                    <option value="grid">Grelha Orbital</option>
+                                    <option value="chess">Xadrez Tático</option>
+                                    <option value="circuit">Circuitos Ativos</option>
+                                    <option value="honeycomb">Colmeia Neural</option>
+                                    <option value="clean">Placa Metálica</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-blue-600/5 p-4 rounded-xl border border-blue-600/20">
+                    <span class="text-[9px] font-bold text-blue-400 uppercase block mb-2">Monitor Orbital</span>
+                    <ul class="text-[10px] text-slate-500 space-y-2 italic leading-tight">
+                        <li>• Arraste para orbitar</li>
+                        <li>• Scroll para Zoom</li>
+                        <li>• A/D para mover</li>
+                    </ul>
+                </div>
+
+                <div id="players-status" class="bg-green-600/10 p-4 rounded-xl border border-green-600/30">
+                    <span class="text-[9px] font-bold text-green-400 uppercase block mb-2">Jogadores</span>
+                    <div id="players-count" class="text-[11px] text-slate-400 mono">Aguardando...</div>
+                    <div id="ready-status" class="text-[10px] text-yellow-400 mono mt-2">Pronto: --/2</div>
+                </div>
+
+                <button id="ready-btn" onclick="setReady()" class="mt-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 rounded-lg text-[11px] uppercase tracking-[0.2em] transition-all border border-yellow-400/20">
+                    PRONTO
+                </button>
+            </div>
+
+            <button id="start-btn" onclick="startGame()" disabled class="mt-auto bg-gray-600 text-gray-400 font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] transition-all border border-gray-500/20">
+                Aguardando Jogador
+            </button>
+        </aside>
+
+        <main class="flex-1 relative">
+            <div id="canvas-container"></div>
+            <div class="absolute inset-0 ui-overlay flex flex-col p-0">
+                <div class="flex justify-between items-start w-full p-4">
+                    <div class="bg-yellow-400 p-2 border-2 border-black shadow-[4px_4px_0_rgba(0,0,0,1)] flex flex-col items-center">
+                        <span class="text-[7px] text-black/60 font-bold uppercase mb-0.5 tracking-tighter">PLAYER 1</span>
+                        <input type="text" value="PLAYER 1" onfocus="if(this.value==='PLAYER 1') this.value=''" onblur="if(this.value==='') this.value='PLAYER 1'" class="zone-card-input text-black placeholder-black/50" />
+                    </div>
+                    <div class="scoreboard-container">
+                        <div class="text-center"><span id="score-a" class="text-3xl font-black mono text-yellow-400">00</span></div>
+                        <div class="text-cyan-500 font-black italic text-sm">VS</div>
+                        <div class="text-center"><span id="score-b" class="text-3xl font-black mono text-red-500">00</span></div>
+                    </div>
+                    <div class="bg-red-600 p-2 border-2 border-white shadow-[4px_4px_0_rgba(0,0,0,1)] flex flex-col items-center">
+                        <span class="text-[7px] text-white/60 font-bold uppercase mb-0.5 tracking-tighter">PLAYER 2</span>
+                        <input type="text" value="PLAYER 2" onfocus="if(this.value==='PLAYER 2') this.value=''" onblur="if(this.value==='') this.value='PLAYER 2'" class="zone-card-input text-white placeholder-white/50" />
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let socket;
+        let myPlayerId = null;
+        let isConnected = false;
+        let gameRunning = false;
+        let gameStartTime = null;
+        let isReady = false;
+        let playersReady = { 1: false, 2: false };
+        
+        let scene, camera, renderer, arena, disc, players = [];
+        let particles = [];
+        let riverMesh, riverTexture;
+        let fallingLeaves = []; 
+        let isMouseDown = false;
+        
+        let cameraRadius = 120, cameraTheta = Math.PI / 4, cameraPhi = Math.PI / 3;
+        const minPhi = 0.1, maxPhi = Math.PI / 2 - 0.1;
+
+        let scoreA = 0, scoreB = 0;
+        const arenaX = 20, arenaZ = 12.5, discRadius = 1.2;
+        let duration = 5 * 60 * 1000;
+        
+        const forestFloorY = -25; 
+
+        const keys = { a: false, d: false };
+        const PLAYER_SPEED = 0.4;
+
+        function createNatureTexture(type) {
+            const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+
+            if (type === 'bark') {
+                ctx.fillStyle = '#3d2b1f'; ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 200; i++) {
+                    const x = Math.random() * 512;
+                    ctx.fillStyle = `rgb(${45-Math.random()*20}, ${35-Math.random()*15}, ${25-Math.random()*10})`;
+                    ctx.fillRect(x, Math.random() * 512, 2, 50 + Math.random()*100);
+                }
+            } else if (type === 'wood_table') {
+                ctx.fillStyle = '#4a2f1b'; ctx.fillRect(0, 0, 512, 512);
+                ctx.strokeStyle = '#2e1c0f';
+                for(let i=0; i<60; i++) {
+                    ctx.lineWidth = 1 + Math.random() * 3;
+                    ctx.beginPath(); let x = Math.random() * 512; ctx.moveTo(x, 0);
+                    ctx.bezierCurveTo(x + 50, 150, x - 50, 350, x + (Math.random()-0.5)*100, 512); ctx.stroke();
+                }
+                ctx.globalAlpha = 0.15; ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, 512, 512); ctx.globalAlpha = 1.0;
+            } else if (type === 'leaves') {
+                ctx.fillStyle = '#0a330a'; ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 4000; i++) {
+                    ctx.fillStyle = Math.random() > 0.5 ? '#1b521b' : '#0d2b0d';
+                    ctx.beginPath(); ctx.arc(Math.random()*512, Math.random()*512, 3+Math.random()*5, 0, Math.PI*2); ctx.fill();
+                }
+            } else if (type === 'forest_floor') {
+                ctx.fillStyle = '#0a140a'; ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 5000; i++) {
+                    ctx.fillStyle = `rgb(${10+Math.random()*20}, ${25+Math.random()*15}, 10)`;
+                    ctx.fillRect(Math.random()*512, Math.random()*512, 3, 3);
+                }
+            } else if (type === 'water') {
+                ctx.fillStyle = '#0044aa'; ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 150; i++) {
+                    ctx.fillStyle = `rgba(180, 220, 255, ${0.1+Math.random()*0.4})`;
+                    ctx.beginPath(); ctx.ellipse(Math.random()*512, Math.random()*512, 40+Math.random()*40, 2+Math.random()*3, 0, 0, Math.PI*2); ctx.fill();
+                }
+                ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                for (let i = 0; i < 200; i++) ctx.fillRect(Math.random()*512, Math.random()*512, 2, 2);
+            } else if (type === 'rock') {
+                ctx.fillStyle = '#444'; ctx.fillRect(0, 0, 512, 512);
+                for (let i = 0; i < 2000; i++) {
+                    const g = 40 + Math.random()*40; ctx.fillStyle = `rgb(${g}, ${g}, ${g})`; ctx.fillRect(Math.random()*512, Math.random()*512, 4, 4);
+                }
+            }
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+            return texture;
+        }
+
+        function createEnhancedTexture(type, color1, color2, style = 'linear') {
+            const canvas = document.createElement('canvas'); canvas.width = 1024; canvas.height = 1024;
+            const ctx = canvas.getContext('2d');
+            
+            let gradient = style === 'radial' ? ctx.createRadialGradient(512, 512, 0, 512, 512, 700) : ctx.createLinearGradient(0, 0, 0, 1024);
+            gradient.addColorStop(0, color1); gradient.addColorStop(1, color2);
+            ctx.fillStyle = gradient; ctx.fillRect(0, 0, 1024, 1024);
+
+            if (type === 'grid') {
+                ctx.shadowBlur = 10; ctx.shadowColor = 'rgba(0, 242, 255, 0.8)';
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)'; ctx.lineWidth = 3;
+                for(let i=0; i<=1024; i+=64) {
+                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke();
+                }
+                ctx.shadowBlur = 0;
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)'; ctx.lineWidth = 1;
+                for(let i=0; i<=1024; i+=16) {
+                    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke();
+                    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke();
+                }
+            } else if (type === 'chess') {
+                ctx.fillStyle = 'rgba(0,0,0,0.2)';
+                for (let x=0; x<16; x++) for (let y=0; y<16; y++) if((x+y)%2===0) ctx.fillRect(x*64,y*64,64,64);
+                ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 2;
+                for(let i=0; i<=1024; i+=64) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke(); ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke(); }
+            } else if (type === 'circuit') {
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)'; ctx.lineWidth = 2;
+                for(let i=0; i<40; i++) {
+                    let x = Math.random()*1024, y = Math.random()*1024;
+                    ctx.beginPath(); ctx.moveTo(x, y);
+                    for(let j=0; j<5; j++) {
+                        let dir = Math.floor(Math.random()*4);
+                        if(dir === 0) x += 100; else if(dir === 1) x -= 100; else if(dir === 2) y += 100; else y -= 100;
+                        ctx.lineTo(x, y);
+                    }
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)'; ctx.fillRect(x-4, y-4, 8, 8);
+                }
+            } else if (type === 'honeycomb') {
+                ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 2;
+                const size = 50;
+                for (let y = 0; y < 1024 + size; y += size * 1.5) {
+                    for (let x = 0; x < 1024 + size; x += size * Math.sqrt(3)) {
+                        let cx = x + (Math.floor(y / (size * 1.5)) % 2) * (size * Math.sqrt(3) / 2);
+                        ctx.beginPath(); for (let i = 0; i < 6; i++) {
+                            let angle = i * Math.PI / 3;
+                            ctx.lineTo(cx + size * Math.cos(angle), y + size * Math.sin(angle));
+                        }
+                        ctx.closePath(); ctx.stroke();
+                    }
+                }
+            } else if (type === 'clean') {
+                ctx.strokeStyle = 'rgba(255,255,255,0.03)'; ctx.lineWidth = 1;
+                for(let i=0; i<1024; i+=4) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, 1024); ctx.stroke(); }
+                ctx.fillStyle = 'rgba(0,0,0,0.2)'; ctx.fillRect(0, 500, 1024, 24);
+            } else if (type === 'stripes') {
+                ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 15;
+                for(let i=0; i<1024; i+=40) { ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(1024, i); ctx.stroke(); }
+            } else if (type === 'data') {
+                ctx.fillStyle = 'rgba(255,255,255,0.2)';
+                for(let i=0; i<600; i++) ctx.fillRect(Math.random()*1024, Math.random()*1024, 4, 15);
+            } else if (type === 'hazard') {
+                ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 35;
+                for(let i=-1024; i<1024; i+=90) { ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i+1024, 1024); ctx.stroke(); }
+            }
+
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.wrapS = texture.wrapT = THREE.ClampToEdgeWrapping;
+            return texture;
+        }
+
+        function setupEnvironment() {
+            const floorTex = createNatureTexture('forest_floor'); floorTex.repeat.set(15, 15);
+            const forestFloorGeo = new THREE.PlaneGeometry(1000, 1000);
+            const forestFloorMat = new THREE.MeshPhongMaterial({ map: floorTex });
+            const forestFloor = new THREE.Mesh(forestFloorGeo, forestFloorMat);
+            forestFloor.rotation.x = -Math.PI / 2; forestFloor.position.y = forestFloorY; scene.add(forestFloor);
+
+            const sunGroup = new THREE.Group();
+            const sunGeo = new THREE.SphereGeometry(35, 32, 32); const sunMat = new THREE.MeshBasicMaterial({ color: 0xffdd44 });
+            const sunMesh = new THREE.Mesh(sunGeo, sunMat);
+            const sunGlowGeo = new THREE.SphereGeometry(65, 32, 32); const sunGlowMat = new THREE.MeshBasicMaterial({ color: 0xffaa00, transparent: true, opacity: 0.15 });
+            const sunGlow = new THREE.Mesh(sunGlowGeo, sunGlowMat);
+            sunGroup.add(sunMesh); sunGroup.add(sunGlow); sunGroup.position.set(350, 450, -700); scene.add(sunGroup);
+
+            const woodTableTex = createNatureTexture('wood_table');
+            const tableTopGeo = new THREE.BoxGeometry(42, 3, 27);
+            const tableTopMat = new THREE.MeshPhongMaterial({ map: woodTableTex, shininess: 80, specular: 0x222222 });
+            const tableTop = new THREE.Mesh(tableTopGeo, tableTopMat); tableTop.position.y = -1.5; scene.add(tableTop);
+
+            const legHeight = 22; const legGeo = new THREE.BoxGeometry(2.5, legHeight, 2.5); const legMat = new THREE.MeshPhongMaterial({ map: woodTableTex });
+            [{x: 18, z: 11}, {x: -18, z: 11}, {x: 18, z: -11}, {x: -18, z: -11}].forEach(pos => {
+                const leg = new THREE.Mesh(legGeo, legMat); leg.position.set(pos.x, -3 - (legHeight/2), pos.z); scene.add(leg);
+            });
+
+            const barkTexture = createNatureTexture('bark'); const leafTexture = createNatureTexture('leaves');
+            const trunkGeo = new THREE.CylinderGeometry(1.8, 2.5, 30, 12); const leavesGeo = new THREE.ConeGeometry(10, 40, 12);
+            for(let i = 0; i < 110; i++) {
+                const tree = new THREE.Group();
+                const trunk = new THREE.Mesh(trunkGeo, new THREE.MeshPhongMaterial({ map: barkTexture })); trunk.position.y = 15; tree.add(trunk);
+                const leaves = new THREE.Mesh(leavesGeo, new THREE.MeshPhongMaterial({ map: leafTexture })); leaves.position.y = 45; tree.add(leaves);
+                let tx, tz; do { tx = (Math.random() - 0.5) * 900; tz = (Math.random() - 0.5) * 900; } while (Math.abs(tx) < 60 && Math.abs(tz) < 50);
+                tree.position.set(tx, forestFloorY, tz); tree.scale.setScalar(1.5 + Math.random() * 3.0); tree.rotation.y = Math.random() * Math.PI; scene.add(tree);
+            }
+
+            for(let i = 0; i < 350; i++) {
+                const bush = new THREE.Group();
+                const numSpheres = 4 + Math.floor(Math.random() * 8);
+                for(let j=0; j<numSpheres; j++) {
+                    const bushPart = new THREE.Mesh(new THREE.SphereGeometry(2.5 + Math.random() * 2.5, 8, 8), new THREE.MeshPhongMaterial({ color: new THREE.Color().setHSL(0.33, 0.5, 0.15 + Math.random() * 0.2), map: leafTexture }));
+                    bushPart.position.set((Math.random()-0.5)*8, Math.random()*5, (Math.random()-0.5)*8); bush.add(bushPart);
+                }
+                let bx, bz; do { bx = (Math.random() - 0.5) * 950; bz = (Math.random() - 0.5) * 950; } while (Math.abs(bx) < 55 && Math.abs(bz) < 45);
+                bush.position.set(bx, forestFloorY, bz); bush.rotation.y = Math.random() * Math.PI; scene.add(bush);
+            }
+
+            riverTexture = createNatureTexture('water'); riverTexture.repeat.set(1, 4);
+            const riverCurve = new THREE.CatmullRomCurve3([new THREE.Vector3(-350, 0, -200), new THREE.Vector3(-150, 0, -120), new THREE.Vector3(0, 0, -250), new THREE.Vector3(180, 0, -150), new THREE.Vector3(350, 0, -250)]);
+            const riverGeo = new THREE.TubeGeometry(riverCurve, 150, 12, 8, false);
+            riverMesh = new THREE.Mesh(riverGeo, new THREE.MeshPhongMaterial({ map: riverTexture, color: 0x00aaff, transparent: true, opacity: 0.9, emissive: 0x004488, shininess: 150 }));
+            riverMesh.position.y = -34; scene.add(riverMesh);
+            
+            const rockTex = createNatureTexture('rock');
+            for(let i=0; i<70; i++) {
+                const t = Math.random(); const pos = riverCurve.getPoint(t);
+                const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2 + Math.random() * 4, 0), new THREE.MeshPhongMaterial({ map: rockTex, shininess: 10 }));
+                rock.position.set(pos.x + (Math.random()-0.5)*15, -26 + (Math.random()*4), pos.z + (Math.random()-0.5)*15);
+                rock.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI); scene.add(rock);
+            }
+
+            const leafGeo = new THREE.PlaneGeometry(0.5, 0.5);
+            for(let i = 0; i < 180; i++) {
+                const leaf = new THREE.Mesh(leafGeo, new THREE.MeshBasicMaterial({ color: 0x32cd32, side: THREE.DoubleSide, transparent: true, opacity: 0.8 }));
+                resetLeaf(leaf); scene.add(leaf); fallingLeaves.push(leaf);
+            }
+        }
+
+        function resetLeaf(leaf) {
+            leaf.position.set((Math.random()-0.5)*900, 50 + Math.random()*60, (Math.random()-0.5)*900);
+            leaf.userData = { speedY: 0.08 + Math.random()*0.12, swaySpeed: 0.02 + Math.random()*0.05, swayAmount: 0.3 + Math.random()*0.6, rotSpeed: (Math.random()-0.5)*0.07, phase: Math.random()*Math.PI*2 };
+        }
+
+        function updateArenaVisuals() {
+            if (!arena) return;
+            const c1 = document.getElementById('floor-color-1').value;
+            const c2 = document.getElementById('floor-color-2').value;
+            const type = document.getElementById('floor-texture-selector').value;
+            arena.material.map = createEnhancedTexture(type, c1, c2, 'radial');
+            arena.material.needsUpdate = true;
+        }
+
+        function updatePlayer1Visuals() {
+            if (!players[0]) return;
+            const c1 = document.getElementById('p1-color-1').value;
+            const c2 = document.getElementById('p1-color-2').value;
+            const type = document.getElementById('p1-texture-selector').value;
+            applyPlayerVisuals(0, c1, c2, type);
+            
+            if (socket && isConnected) {
+                socket.emit('playerVisuals', { color1: c1, color2: c2, texture: type });
+            }
+        }
+
+        function applyPlayerVisuals(playerIndex, c1, c2, type) {
+            if (!players[playerIndex]) return;
+            const athlete = players[playerIndex];
+            athlete.material.map = createEnhancedTexture(type, c1, c2, 'linear');
+            athlete.material.emissive.set(c1);
+            athlete.material.emissiveIntensity = 0.4;
+            athlete.material.needsUpdate = true;
+        }
+
+        function updateScoreboard() {
+            document.getElementById('score-a').innerText = scoreA.toString().padStart(2, '0');
+            document.getElementById('score-b').innerText = scoreB.toString().padStart(2, '0');
+        }
+
+        function updateCameraTransform() {
+            camera.position.set(cameraRadius * Math.sin(cameraPhi) * Math.cos(cameraTheta), cameraRadius * Math.cos(cameraPhi), cameraRadius * Math.sin(cameraPhi) * Math.sin(cameraTheta));
+            camera.lookAt(0, 0, 0);
+        }
+
+        function init() {
+            socket = io();
+
+            socket.on('connect', () => {
+                isConnected = true;
+                document.getElementById('connection-status').className = 'w-3 h-3 bg-green-400 rounded-full animate-pulse';
+                document.getElementById('status-text').innerText = 'Connected';
+            });
+
+            socket.on('disconnect', () => {
+                isConnected = false;
+                document.getElementById('connection-status').className = 'w-3 h-3 bg-red-400 rounded-full animate-pulse';
+                document.getElementById('status-text').innerText = 'Disconnected';
+            });
+
+            socket.on('init', (data) => {
+                myPlayerId = data.playerId;
+                scoreA = data.gameState.scores.a;
+                scoreB = data.gameState.scores.b;
+                updateScoreboard();
+                updatePlayerStatus(data.gameState);
+            });
+
+            function updatePlayerStatus(state) {
+                const count = Object.keys(state.players).length;
+                const statusEl = document.getElementById('players-count');
+                const btn = document.getElementById('start-btn');
+                
+                if (count === 1) {
+                    statusEl.innerText = '1/2 Jogadores';
+                    statusEl.className = 'text-[11px] text-yellow-400 mono';
+                    btn.disabled = true;
+                    btn.className = 'mt-auto bg-gray-600 text-gray-400 font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-gray-500/20';
+                    btn.innerText = 'Aguardando 2º';
+                } else if (count === 2) {
+                    statusEl.innerText = '2/2 Jogadores';
+                    statusEl.className = 'text-[11px] text-green-400 mono';
+                    if (!gameRunning) {
+                        btn.disabled = false;
+                        btn.className = 'mt-auto bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] transition-all shadow-xl shadow-blue-900/30 active:scale-[0.98] border border-blue-400/20';
+                        btn.innerText = 'Iniciar Jogo';
+                    }
+                }
+            }
+
+            socket.on('playerCount', (count) => {
+                const statusEl = document.getElementById('players-count');
+                const btn = document.getElementById('start-btn');
+                if (count === 1) {
+                    statusEl.innerText = '1/2 Jogadores';
+                    statusEl.className = 'text-[11px] text-yellow-400 mono';
+                    btn.disabled = true;
+                    btn.className = 'mt-auto bg-gray-600 text-gray-400 font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-gray-500/20';
+                    btn.innerText = 'Aguardando 2º';
+} else if (count === 2) {
+                    statusEl.innerText = '2/2 Jogadores';
+                    statusEl.className = 'text-[11px] text-green-400 mono';
+                    checkCanStart();
+                }
+            });
+
+            socket.on('playerCount', (count) => {
+                const statusEl = document.getElementById('players-count');
+                const btn = document.getElementById('start-btn');
+                if (count === 1) {
+                    statusEl.innerText = '1/2 Jogadores';
+                    statusEl.className = 'text-[11px] text-yellow-400 mono';
+                    playersReady = { 1: false, 2: false };
+                    updateReadyStatus();
+                    btn.disabled = true;
+                    btn.className = 'mt-auto bg-gray-600 text-gray-400 font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-gray-500/20';
+                    btn.innerText = 'Aguardando 2º';
+                } else if (count === 2) {
+                    statusEl.innerText = '2/2 Jogadores';
+                    statusEl.className = 'text-[11px] text-green-400 mono';
+                    checkCanStart();
+                }
+            });
+
+            socket.on('readyUpdate', (readyStatus) => {
+                playersReady = readyStatus;
+                updateReadyStatus();
+                checkCanStart();
+            });
+
+            function checkCanStart() {
+                const btn = document.getElementById('start-btn');
+                const allReady = playersReady[1] && playersReady[2];
+                if (allReady && !gameRunning) {
+                    btn.disabled = false;
+                    btn.className = 'mt-auto bg-blue-600 hover:bg-blue-500 text-white font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] transition-all shadow-xl shadow-blue-900/30 active:scale-[0.98] border border-blue-400/20';
+                    btn.innerText = 'Iniciar Jogo';
+                } else if (!gameRunning) {
+                    btn.disabled = true;
+                    btn.className = 'mt-auto bg-gray-600 text-gray-400 font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-gray-500/20';
+                    btn.innerText = 'Aguardando Prontos';
+                }
+            }
+
+            function updateReadyStatus() {
+                const readyEl = document.getElementById('ready-status');
+                const p1Ready = playersReady[1] ? '✓' : '✗';
+                const p2Ready = playersReady[2] ? '✓' : '✗';
+                readyEl.innerText = `Pronto: ${p1Ready}/${p2Ready}`;
+            }
+
+            function setReady() {
+                isReady = !isReady;
+                socket.emit('setReady', isReady);
+                const btn = document.getElementById('ready-btn');
+                if (isReady) {
+                    btn.className = 'mt-2 bg-green-600 text-white font-bold py-3 rounded-lg text-[11px] uppercase tracking-[0.2em] transition-all border border-green-400/20';
+                    btn.innerText = 'PRONTO ✓';
+                } else {
+                    btn.className = 'mt-2 bg-yellow-600 hover:bg-yellow-500 text-white font-bold py-3 rounded-lg text-[11px] uppercase tracking-[0.2em] transition-all border border-yellow-400/20';
+                    btn.innerText = 'PRONTO';
+                }
+            }
+
+            socket.on('playerVisuals', (data) => {
+                const otherPlayerIndex = myPlayerId === 1 ? 1 : 0;
+                applyPlayerVisuals(otherPlayerIndex, data.color1, data.color2, data.texture);
+            });
+
+            socket.on('waiting', (waiting) => {
+                const btn = document.getElementById('start-btn');
+                if (waiting) {
+                    btn.disabled = true;
+                    btn.className = 'mt-auto bg-gray-600 text-gray-400 font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-gray-500/20';
+                    btn.innerText = 'Aguardando Jogador';
+                }
+            });
+
+            socket.on('gameStarted', () => {
+                gameRunning = true;
+                gameStartTime = Date.now();
+                const btn = document.getElementById('start-btn');
+                btn.disabled = true;
+                btn.className = 'mt-auto bg-green-600 text-white font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-green-400/20';
+                btn.innerText = 'Jogo em Andamento';
+            });
+
+            socket.on('gameState', (state) => {
+                if (!players[0] || !players[1]) return;
+                if (state.players[1]) players[0].position.z = state.players[1].z;
+                if (state.players[2]) players[1].position.z = state.players[2].z;
+                
+                disc.position.x = state.disc.x;
+                disc.position.z = state.disc.z;
+                
+                scoreA = state.scores.a;
+                scoreB = state.scores.b;
+                updateScoreboard();
+
+                if (state.running && gameStartTime) {
+                    const remaining = Math.max(0, state.duration - (Date.now() - gameStartTime));
+                    document.getElementById('time-display').innerText = `${Math.floor(remaining / 60000).toString().padStart(2, '0')}:${Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0')}:${Math.floor((remaining % 1000) / 10).toString().padStart(2, '0')}`;
+                }
+            });
+
+            socket.on('scoreUpdate', (scores) => {
+                scoreA = scores.a;
+                scoreB = scores.b;
+                updateScoreboard();
+            });
+
+            socket.on('playerMove', (data) => {
+                const otherPlayerIndex = data.playerId === 1 ? 1 : 0;
+                if (players[otherPlayerIndex]) {
+                    players[otherPlayerIndex].position.z = data.z;
+                }
+            });
+
+            socket.on('playerDisconnected', (playerId) => {
+                const btn = document.getElementById('start-btn');
+                btn.disabled = true;
+                btn.className = 'mt-auto bg-yellow-600 text-white font-black py-4 rounded-xl text-[11px] uppercase tracking-[0.2em] border border-yellow-400/20';
+                btn.innerText = 'Jogador Saiu';
+                gameRunning = false;
+            });
+
+            socket.on('full', () => {
+                alert('Servidor cheio!');
+                window.location.reload();
+            });
+
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene(); scene.background = new THREE.Color(0x05080a); scene.fog = new THREE.FogExp2(0x05080a, 0.003); 
+            camera = new THREE.PerspectiveCamera(75, container.clientWidth / container.clientHeight, 0.1, 8000);
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(container.clientWidth, container.clientHeight); container.appendChild(renderer.domElement);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.4)); 
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.7); dirLight.position.set(350, 450, -700); scene.add(dirLight);
+            setupEnvironment(); 
+            arena = new THREE.Mesh(new THREE.BoxGeometry(40, 1, 25), new THREE.MeshPhongMaterial({ specular: 0x111111, shininess: 10 }));
+            updateArenaVisuals(); scene.add(arena);
+            disc = new THREE.Mesh(new THREE.CylinderGeometry(discRadius, discRadius, 0.5, 32), new THREE.MeshPhongMaterial({ color: 0xff8c00, emissive: 0xff3300, emissiveIntensity: 0.5 }));
+            disc.position.y = 2; scene.add(disc);
+            for(let i = 0; i < 30; i++) {
+                const p = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 8), new THREE.MeshBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.6 }));
+                p.visible = false; scene.add(p); particles.push(p);
+            }
+            const p1 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 4, 6), new THREE.MeshPhongMaterial({ shininess: 100 }));
+            p1.position.set(-18.5, 2.5, 0); scene.add(p1); players.push(p1); 
+            updatePlayer1Visuals(); 
+            const p2 = new THREE.Mesh(new THREE.BoxGeometry(1.5, 4, 6), new THREE.MeshPhongMaterial({ color: 0xff007a, emissive: 0xff007a, emissiveIntensity: 0.3 }));
+            p2.position.set(18.5, 2.5, 0); scene.add(p2); players.push(p2);
+            updateCameraTransform();
+            
+            container.addEventListener('mousedown', () => isMouseDown = true); container.addEventListener('mouseup', () => isMouseDown = false);
+            container.addEventListener('mousemove', (e) => { if(isMouseDown) { cameraTheta -= e.movementX * 0.008; cameraPhi = Math.max(minPhi, Math.min(maxPhi, cameraPhi - e.movementY * 0.008)); updateCameraTransform(); } });
+            container.addEventListener('wheel', (e) => { e.preventDefault(); cameraRadius = Math.max(30, Math.min(2000, cameraRadius + e.deltaY * 0.1)); updateCameraTransform(); }, { passive: false });
+            window.addEventListener('resize', () => { camera.aspect = container.clientWidth / container.clientHeight; camera.updateProjectionMatrix(); renderer.setSize(container.clientWidth, container.clientHeight); });
+
+            document.addEventListener('keydown', (e) => {
+                if (e.key.toLowerCase() === 'a') keys.a = true;
+                if (e.key.toLowerCase() === 'd') keys.d = true;
+            });
+
+            document.addEventListener('keyup', (e) => {
+                if (e.key.toLowerCase() === 'a') keys.a = false;
+                if (e.key.toLowerCase() === 'd') keys.d = false;
+            });
+
+            setInterval(() => {
+                const playerIndex = myPlayerId - 1;
+                if (players[playerIndex] && isConnected) {
+                    if (keys.a) players[playerIndex].position.z += PLAYER_SPEED;
+                    if (keys.d) players[playerIndex].position.z -= PLAYER_SPEED;
+                    players[playerIndex].position.z = Math.max(-9.5, Math.min(9.5, players[playerIndex].position.z));
+                    socket.emit('playerMove', { z: players[playerIndex].position.z });
+                }
+            }, 1000 / 60);
+
+            animate();
+        }
+
+        function startGame() {
+            if (isConnected && myPlayerId) {
+                socket.emit('startGame');
+            }
+        }
+
+        let trailHistory = [];
+        let lastDiscPos = { x: 0, z: 0 };
+        
+        function animate() {
+            requestAnimationFrame(animate);
+            if(riverTexture) riverTexture.offset.x -= 0.005;
+            fallingLeaves.forEach(leaf => {
+                leaf.position.y -= leaf.userData.speedY;
+                leaf.position.x += Math.sin(Date.now() * leaf.userData.swaySpeed + leaf.userData.phase) * 0.03;
+                if (leaf.position.y < forestFloorY) resetLeaf(leaf);
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        window.onload = init;
+    </script>
+</body>
+</html>
